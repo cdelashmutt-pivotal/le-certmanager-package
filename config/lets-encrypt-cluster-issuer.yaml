@@ -1,0 +1,85 @@
+#@ load("@ytt:data", "data")
+#@ load("@ytt:base64", "base64")
+
+#@ if hasattr(data.values, "aws"):
+---
+apiVersion: v1
+data:
+  secret-access-key: #@ base64.encode(data.values.aws.credentials.secretKey)
+kind: Secret
+metadata:
+  creationTimestamp: null
+  name: prod-route53-credentials-secret
+  namespace: cert-manager
+#@ end
+#@ if hasattr(data.values, "gcp"):
+---
+apiVersion: v1
+data: {
+  "gcp.key.json": #@ data.values.gcp.key
+}
+kind: Secret
+metadata:
+  name: prod-gcp-credentials-secret
+  namespace: cert-manager
+#@ end
+#@ if hasattr(data.values, "azure"):
+---
+apiVersion: v1
+data:
+  client-secret: #@ base64.encode(data.values.azure.credentials.appPassword)
+kind: Secret
+metadata:
+  creationTimestamp: null
+  name: prod-azure-credentials-secret
+  namespace: cert-manager
+#@ end
+---
+apiVersion: cert-manager.io/v1beta1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-contour-cluster-issuer
+  namespace: tanzu-system-ingress
+spec:
+  acme:
+    email: #@ data.values.acme.email
+    privateKeySecretRef:
+      name: acme-account-key
+    server: https://acme-v02.api.letsencrypt.org/directory
+    solvers:
+      #@ if hasattr(data.values, "aws"):
+      - dns01:
+          route53:
+            region: #@ data.values.aws.region
+            accessKeyID: #@ data.values.aws.credentials.accessKey
+            secretAccessKeySecretRef:
+              name: prod-route53-credentials-secret
+              key: secret-access-key
+            hostedZoneID: #@ data.values.aws.route53.zoneId
+            #@ if hasattr(data.values.aws.credentials, "certManagerRoleArn"):
+            role: #@ data.values.aws.credentials.certManagerRoleArn
+            #@ end
+      #@ end
+      #@ if hasattr(data.values, "gcp"):
+      - dns01:
+          clouddns:
+            project: #@ data.values.gcp.project
+            serviceAccountSecretRef:
+              name: prod-gcp-credentials-secret
+              key: gcp.key.json
+      #@ end
+      #@ if hasattr(data.values, "azure"):
+      - dns01:
+          azureDNS:
+            clientID: #@ data.values.azure.credentials.appId
+            clientSecretSecretRef:
+            # The following is the secret we created in Kubernetes. Issuer will use this to present challenge to Azure DNS.
+              name: prod-azure-credentials-secret
+              key: client-secret
+            subscriptionID: #@ data.values.azure.subscriptionId
+            tenantID: #@ data.values.azure.tenantId
+            resourceGroupName: #@ data.values.azure.dnsResourceGroupName
+            hostedZoneName: #@ data.values.azure.dnsZoneName
+            # Azure Cloud Environment, default to AzurePublicCloud
+            environment: #@ data.values.azure.environment
+      #@ end
